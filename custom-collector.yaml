@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-conf
+  labels:
+    app: opentelemetry
+    component: otel-collector-conf
+data:
+  otel-collector-config: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+          http:
+      datadog:
+    processors:
+      batch:
+    exporters:
+      otlp:
+        endpoint: "api.honeycomb.io:443"
+        headers:
+          "x-honeycomb-team": "${HONEYCOMB_API_KEY}"
+    service:
+      pipelines:
+        traces/1:
+          receivers: [otlp, datadog]
+          processors: [batch]
+          exporters: [otlp]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  labels:
+    app: opentelemetry
+    component: otel-collector
+spec:
+  ports:
+  - name: otlp-grpc # Default endpoint for OpenTelemetry gRPC receiver.
+    port: 4317
+    protocol: TCP
+    targetPort: 4317
+  - name: otlp-http # Default endpoint for OpenTelemetry HTTP receiver.
+    port: 4318
+    protocol: TCP
+    targetPort: 4318
+  - name: datadog
+    port: 8126
+    protocol: TCP
+    targetPort: 8126
+  selector:
+    component: otel-collector
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels:
+    app: opentelemetry
+    component: otel-collector
+spec:
+  selector:
+    matchLabels:
+      app: opentelemetry
+      component: otel-collector
+  minReadySeconds: 5
+  progressDeadlineSeconds: 120
+  replicas: 1 #TODO - adjust this to your own requirements
+  template:
+    metadata:
+      labels:
+        app: opentelemetry
+        component: otel-collector
+    spec:
+      containers:
+      - image: msickleshoneycomb/collector-with-dd-receiver:0.56.0 #Todo - adjust this to your own repository
+        name: otel-collector
+        env:
+        - name: HONEYCOMB_API_KEY                                                                                                                                                       
+          valueFrom:                                                                                                                                                                    
+            secretKeyRef:                                                                                                                                                               
+              key: api-key                                                                                                                                                              
+              name: honeycomb
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+          requests:
+            cpu: 200m
+            memory: 400Mi
+        ports:
+        - containerPort: 4317 # Default endpoint for OpenTelemetry receiver.
+        - containerPort: 4318 # Default endpoint for OpenTelemetry receiver http.
+        - containerPort: 8126 # Default endpoint for dd receiver
+        volumeMounts:
+        - name: otel-collector-config-vol
+          mountPath: /conf
+#        - name: otel-collector-secrets
+#          mountPath: /secrets
+      volumes:
+        - configMap:
+            name: otel-collector-conf
+            items:
+              - key: otel-collector-config
+                path: otel-collector-config.yaml
+          name: otel-collector-config-vol
